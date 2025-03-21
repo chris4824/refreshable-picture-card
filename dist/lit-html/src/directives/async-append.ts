@@ -1,22 +1,57 @@
 /**
  * @license
- * Copyright (c) 2017 The Polymer Project Authors. All rights reserved.
- * This code may only be used under the BSD style license found at
- * http://polymer.github.io/LICENSE.txt
- * The complete set of authors may be found at
- * http://polymer.github.io/AUTHORS.txt
- * The complete set of contributors may be found at
- * http://polymer.github.io/CONTRIBUTORS.txt
- * Code distributed by Google as part of the polymer project is also
- * subject to an additional IP rights grant found at
- * http://polymer.github.io/PATENTS.txt
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
-import {createMarker, directive, NodePart, Part} from '../lit-html.js';
+import {ChildPart} from '../lit-html.js';
+import {
+  directive,
+  DirectiveParameters,
+  PartInfo,
+  PartType,
+} from '../directive.js';
+import {AsyncReplaceDirective} from './async-replace.js';
+import {
+  clearPart,
+  insertPart,
+  setChildPartValue,
+} from '../directive-helpers.js';
+
+class AsyncAppendDirective extends AsyncReplaceDirective {
+  private __childPart!: ChildPart;
+
+  // Override AsyncReplace to narrow the allowed part type to ChildPart only
+  constructor(partInfo: PartInfo) {
+    super(partInfo);
+    if (partInfo.type !== PartType.CHILD) {
+      throw new Error('asyncAppend can only be used in child expressions');
+    }
+  }
+
+  // Override AsyncReplace to save the part since we need to append into it
+  override update(part: ChildPart, params: DirectiveParameters<this>) {
+    this.__childPart = part;
+    return super.update(part, params);
+  }
+
+  // Override AsyncReplace to append rather than replace
+  protected override commitValue(value: unknown, index: number) {
+    // When we get the first value, clear the part. This lets the
+    // previous value display until we can replace it.
+    if (index === 0) {
+      clearPart(this.__childPart);
+    }
+    // Create and insert a new part and set its value to the next value
+    const newPart = insertPart(this.__childPart);
+    setChildPartValue(newPart, value);
+  }
+}
 
 /**
  * A directive that renders the items of an async iterable[1], appending new
  * values after previous values, similar to the built-in support for iterables.
+ * This directive is usable only in child expressions.
  *
  * Async iterables are objects with a [Symbol.asyncIterator] method, which
  * returns an iterator who's `next()` method returns a Promise. When a new
@@ -25,76 +60,16 @@ import {createMarker, directive, NodePart, Part} from '../lit-html.js';
  * directive has been set on the Part, the iterable will no longer be listened
  * to and new values won't be written to the Part.
  *
- * [1]: https://github.com/tc39/proposal-async-iteration
+ * [1]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for-await...of
  *
  * @param value An async iterable
  * @param mapper An optional function that maps from (value, index) to another
  *     value. Useful for generating templates for each item in the iterable.
  */
-export const asyncAppend = directive(
-    <T>(value: AsyncIterable<T>,
-        mapper?: (v: T, index?: number) => unknown) => async (part: Part) => {
-      if (!(part instanceof NodePart)) {
-        throw new Error('asyncAppend can only be used in text bindings');
-      }
-      // If we've already set up this particular iterable, we don't need
-      // to do anything.
-      if (value === part.value) {
-        return;
-      }
-      part.value = value;
+export const asyncAppend = directive(AsyncAppendDirective);
 
-      // We keep track of item Parts across iterations, so that we can
-      // share marker nodes between consecutive Parts.
-      let itemPart;
-      let i = 0;
-
-      for await (let v of value) {
-        // Check to make sure that value is the still the current value of
-        // the part, and if not bail because a new value owns this part
-        if (part.value !== value) {
-          break;
-        }
-
-        // When we get the first value, clear the part. This lets the
-        // previous value display until we can replace it.
-        if (i === 0) {
-          part.clear();
-        }
-
-        // As a convenience, because functional-programming-style
-        // transforms of iterables and async iterables requires a library,
-        // we accept a mapper function. This is especially convenient for
-        // rendering a template for each item.
-        if (mapper !== undefined) {
-          // This is safe because T must otherwise be treated as unknown by
-          // the rest of the system.
-          v = mapper(v, i) as T;
-        }
-
-        // Like with sync iterables, each item induces a Part, so we need
-        // to keep track of start and end nodes for the Part.
-        // Note: Because these Parts are not updatable like with a sync
-        // iterable (if we render a new value, we always clear), it may
-        // be possible to optimize away the Parts and just re-use the
-        // Part.setValue() logic.
-
-        let itemStartNode = part.startNode;
-
-        // Check to see if we have a previous item and Part
-        if (itemPart !== undefined) {
-          // Create a new node to separate the previous and next Parts
-          itemStartNode = createMarker();
-          // itemPart is currently the Part for the previous item. Set
-          // it's endNode to the node we'll use for the next Part's
-          // startNode.
-          itemPart.endNode = itemStartNode;
-          part.endNode.parentNode!.insertBefore(itemStartNode, part.endNode);
-        }
-        itemPart = new NodePart(part.options);
-        itemPart.insertAfterNode(itemStartNode);
-        itemPart.setValue(v);
-        itemPart.commit();
-        i++;
-      }
-    });
+/**
+ * The type of the class that powers this directive. Necessary for naming the
+ * directive's return type.
+ */
+export type {AsyncAppendDirective};

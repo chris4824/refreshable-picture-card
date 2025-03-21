@@ -2,7 +2,6 @@ import {
   LitElement,
   html,
   css,
-  svg
   // } from "https://unpkg.com/lit-element@2.0.1/lit-element.js?module";
 } from "./lit-element/lit-element.js"
 import { fireEvent } from "./utils.js";

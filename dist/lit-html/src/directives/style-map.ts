@@ -1,88 +1,145 @@
 /**
  * @license
- * Copyright (c) 2018 The Polymer Project Authors. All rights reserved.
- * This code may only be used under the BSD style license found at
- * http://polymer.github.io/LICENSE.txt
- * The complete set of authors may be found at
- * http://polymer.github.io/AUTHORS.txt
- * The complete set of contributors may be found at
- * http://polymer.github.io/CONTRIBUTORS.txt
- * Code distributed by Google as part of the polymer project is also
- * subject to an additional IP rights grant found at
- * http://polymer.github.io/PATENTS.txt
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
-import {AttributePart, directive, Part, PropertyPart} from '../lit-html.js';
-
-export interface StyleInfo {
-  readonly [name: string]: string;
-}
+import {AttributePart, noChange} from '../lit-html.js';
+import {
+  directive,
+  Directive,
+  DirectiveParameters,
+  PartInfo,
+  PartType,
+} from '../directive.js';
 
 /**
- * Stores the StyleInfo object applied to a given AttributePart.
- * Used to unset existing values when a new StyleInfo object is applied.
+ * A key-value set of CSS properties and values.
+ *
+ * The key should be either a valid CSS property name string, like
+ * `'background-color'`, or a valid JavaScript camel case property name
+ * for CSSStyleDeclaration like `backgroundColor`.
  */
-const previousStylePropertyCache = new WeakMap<AttributePart, Set<string>>();
+export interface StyleInfo {
+  [name: string]: string | number | undefined | null;
+}
+
+const important = 'important';
+// The leading space is important
+const importantFlag = ' !' + important;
+// How many characters to remove from a value, as a negative number
+const flagTrim = 0 - importantFlag.length;
+
+class StyleMapDirective extends Directive {
+  private _previousStyleProperties?: Set<string>;
+
+  constructor(partInfo: PartInfo) {
+    super(partInfo);
+    if (
+      partInfo.type !== PartType.ATTRIBUTE ||
+      partInfo.name !== 'style' ||
+      (partInfo.strings?.length as number) > 2
+    ) {
+      throw new Error(
+        'The `styleMap` directive must be used in the `style` attribute ' +
+          'and must be the only part in the attribute.'
+      );
+    }
+  }
+
+  render(styleInfo: Readonly<StyleInfo>) {
+    return Object.keys(styleInfo).reduce((style, prop) => {
+      const value = styleInfo[prop];
+      if (value == null) {
+        return style;
+      }
+      // Convert property names from camel-case to dash-case, i.e.:
+      //  `backgroundColor` -> `background-color`
+      // Vendor-prefixed names need an extra `-` appended to front:
+      //  `webkitAppearance` -> `-webkit-appearance`
+      // Exception is any property name containing a dash, including
+      // custom properties; we assume these are already dash-cased i.e.:
+      //  `--my-button-color` --> `--my-button-color`
+      prop = prop.includes('-')
+        ? prop
+        : prop
+            .replace(/(?:^(webkit|moz|ms|o)|)(?=[A-Z])/g, '-$&')
+            .toLowerCase();
+      return style + `${prop}:${value};`;
+    }, '');
+  }
+
+  override update(part: AttributePart, [styleInfo]: DirectiveParameters<this>) {
+    const {style} = part.element as HTMLElement;
+
+    if (this._previousStyleProperties === undefined) {
+      this._previousStyleProperties = new Set(Object.keys(styleInfo));
+      return this.render(styleInfo);
+    }
+
+    // Remove old properties that no longer exist in styleInfo
+    for (const name of this._previousStyleProperties) {
+      // If the name isn't in styleInfo or it's null/undefined
+      if (styleInfo[name] == null) {
+        this._previousStyleProperties!.delete(name);
+        if (name.includes('-')) {
+          style.removeProperty(name);
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (style as any)[name] = null;
+        }
+      }
+    }
+
+    // Add or update properties
+    for (const name in styleInfo) {
+      const value = styleInfo[name];
+      if (value != null) {
+        this._previousStyleProperties.add(name);
+        const isImportant =
+          typeof value === 'string' && value.endsWith(importantFlag);
+        if (name.includes('-') || isImportant) {
+          style.setProperty(
+            name,
+            isImportant
+              ? (value as string).slice(0, flagTrim)
+              : (value as string),
+            isImportant ? important : ''
+          );
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (style as any)[name] = value;
+        }
+      }
+    }
+    return noChange;
+  }
+}
 
 /**
  * A directive that applies CSS properties to an element.
  *
  * `styleMap` can only be used in the `style` attribute and must be the only
- * expression in the attribute. It takes the property names in the `styleInfo`
- * object and adds the property values as CSS properties. Property names with
- * dashes (`-`) are assumed to be valid CSS property names and set on the
- * element's style object using `setProperty()`. Names without dashes are
- * assumed to be camelCased JavaScript property names and set on the element's
- * style object using property assignment, allowing the style object to
- * translate JavaScript-style names to CSS property names.
+ * expression in the attribute. It takes the property names in the
+ * {@link StyleInfo styleInfo} object and adds the properties to the inline
+ * style of the element.
+ *
+ * Property names with dashes (`-`) are assumed to be valid CSS
+ * property names and set on the element's style object using `setProperty()`.
+ * Names without dashes are assumed to be camelCased JavaScript property names
+ * and set on the element's style object using property assignment, allowing the
+ * style object to translate JavaScript-style names to CSS property names.
  *
  * For example `styleMap({backgroundColor: 'red', 'border-top': '5px', '--size':
  * '0'})` sets the `background-color`, `border-top` and `--size` properties.
  *
- * @param styleInfo {StyleInfo}
+ * @param styleInfo
+ * @see {@link https://lit.dev/docs/templates/directives/#stylemap styleMap code samples on Lit.dev}
  */
-export const styleMap = directive((styleInfo: StyleInfo) => (part: Part) => {
-  if (!(part instanceof AttributePart) || (part instanceof PropertyPart) ||
-      part.committer.name !== 'style' || part.committer.parts.length > 1) {
-    throw new Error(
-        'The `styleMap` directive must be used in the style attribute ' +
-        'and must be the only part in the attribute.');
-  }
+export const styleMap = directive(StyleMapDirective);
 
-  const {committer} = part;
-  const {style} = committer.element as HTMLElement;
-
-  let previousStyleProperties = previousStylePropertyCache.get(part);
-
-  if (previousStyleProperties === undefined) {
-    // Write static styles once
-    style.cssText = committer.strings.join(' ');
-    previousStylePropertyCache.set(part, previousStyleProperties = new Set());
-  }
-
-  // Remove old properties that no longer exist in styleInfo
-  // We use forEach() instead of for-of so that re don't require down-level
-  // iteration.
-  previousStyleProperties.forEach((name) => {
-    if (!(name in styleInfo)) {
-      previousStyleProperties!.delete(name);
-      if (name.indexOf('-') === -1) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (style as any)[name] = null;
-      } else {
-        style.removeProperty(name);
-      }
-    }
-  });
-
-  // Add or update properties
-  for (const name in styleInfo) {
-    previousStyleProperties.add(name);
-    if (name.indexOf('-') === -1) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (style as any)[name] = styleInfo[name];
-    } else {
-      style.setProperty(name, styleInfo[name]);
-    }
-  }
-});
+/**
+ * The type of the class that powers this directive. Necessary for naming the
+ * directive's return type.
+ */
+export type {StyleMapDirective};

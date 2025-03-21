@@ -1,28 +1,26 @@
-interface ShadyCSS {
-  styleElement(host: Element, overrideProps?: {[key: string]: string}): void;
-  getComputedStyleValue(element: Element, property: string): string;
-  ScopingShim: {prepareAdoptedCssText(cssText: string[], name: string): void;};
-  nativeShadow: boolean;
-}
+/**
+ * @license
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
-interface ShadyDOM {
-  inUse: boolean;
-}
+// eslint-disable-next-line no-var
+declare var litElementHydrateSupport:
+  | undefined
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | ((options: {LitElement: any}) => void);
 
-interface Window {
-  ShadyCSS?: ShadyCSS;
-  ShadyDOM?: ShadyDOM;
-  ShadowRoot: typeof ShadowRoot;
-}
+// Note, define both DEV_MODE and prod versions of this since this file is not
+// built.
+// eslint-disable-next-line no-var
+declare var litElementPolyfillSupport:
+  | undefined
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | ((options: {LitElement: any}) => void);
+// eslint-disable-next-line no-var
+declare var litElementPolyfillSupportDevMode: typeof litElementPolyfillSupport;
 
-// Augment existing types with styling API
-interface ShadowRoot {
-  adoptedStyleSheets: CSSStyleSheet[];
-}
-
-declare var ShadowRoot: {prototype: ShadowRoot; new (): ShadowRoot;}
-
-interface CSSStyleSheet {
-  replaceSync(cssText: string): void;
-  replace(cssText: string): Promise<unknown>;
-}
+// eslint-disable-next-line no-var
+declare var litElementVersions: undefined | Array<string>;
+// eslint-disable-next-line no-var
+declare var litIssuedWarnings: undefined | Set<string | undefined>;
